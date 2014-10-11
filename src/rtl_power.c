@@ -22,7 +22,7 @@
 /*
  * rtl_power: general purpose FFT integrator
  * -f low_freq:high_freq:max_bin_size
- * -i seconds
+ * -i milliseconds
  * outputs CSV
  * time, low, high, step, db, db, db ...
  * db optional?  raw output might be better for noise correction
@@ -124,7 +124,7 @@ void usage(void)
 		"\t-f lower:upper:bin_size [Hz]\n"
 		"\t (bin size is a maximum, smaller more convenient bins\n"
 		"\t  will be used.  valid range 1Hz - 2.8MHz)\n"
-		"\t[-i integration_interval (default: 10 seconds)]\n"
+		"\t[-i integration_interval (default: 10000 milliseconds)]\n"
 		"\t (buggy if a full sweep takes longer than the interval)\n"
 		"\t[-1 enables single-shot mode (default: off)]\n"
 		"\t[-e exit_timer (default: off/0)]\n"
@@ -739,18 +739,25 @@ void csv_dbm(struct tuning_state *ts)
 		dbm /= (double)ts->rate;
 		dbm /= (double)ts->samples;
 		dbm  = 10 * log10(dbm);
-		fprintf(file, "%.2f, ", dbm);
+		fprintf(file, "%06.2f, ", dbm);
 	}
 	dbm = (double)ts->avg[i2] / ((double)ts->rate * (double)ts->samples);
 	if (ts->bin_e == 0) {
 		dbm = ((double)ts->avg[0] / \
 		((double)ts->rate * (double)ts->samples));}
 	dbm  = 10 * log10(dbm);
-	fprintf(file, "%.2f\n", dbm);
+	fprintf(file, "%06.2f\n", dbm);
 	for (i=0; i<len; i++) {
 		ts->avg[i] = 0L;
 	}
 	ts->samples = 0;
+}
+
+long get_time(){
+	struct timespec gettime_now;
+	clock_gettime(CLOCK_REALTIME, &gettime_now);
+//	printf("%lu\r\n", gettime_now.tv_nsec);
+	return gettime_now.tv_sec * 1000 + gettime_now.tv_nsec / 1000000;
 }
 
 int main(int argc, char **argv)
@@ -765,7 +772,7 @@ int main(int argc, char **argv)
 	int dev_index = 0;
 	int dev_given = 0;
 	int ppm_error = 0;
-	int interval = 10;
+	long interval = 10000;
 	int fft_threads = 1;
 	int smoothing = 0;
 	int single = 0;
@@ -773,9 +780,9 @@ int main(int argc, char **argv)
 	int offset_tuning = 0;
 	double crop = 0.0;
 	char *freq_optarg;
-	time_t next_tick;
-	time_t time_now;
-	time_t exit_time = 0;
+	long next_tick;
+	long time_now;
+	long exit_time = 0;
 	char t_str[50];
 	struct tm *cal_time;
 	double (*window_fn)(int, int) = rectangle;
@@ -878,9 +885,9 @@ int main(int argc, char **argv)
 	}
 
 	if (interval < 1) {
-		interval = 1;}
+		interval = 10000;}
 
-	fprintf(stderr, "Reporting every %i seconds\n", interval);
+	fprintf(stderr, "Reporting every %lu milliseconds\n", interval);
 
 	if (!dev_given) {
 		dev_index = verbose_device_search("0");
@@ -945,9 +952,9 @@ int main(int argc, char **argv)
 	/* actually do stuff */
 	rtlsdr_set_sample_rate(dev, (uint32_t)tunes[0].rate);
 	sine_table(tunes[0].bin_e);
-	next_tick = time(NULL) + interval;
+	next_tick = get_time() + interval;
 	if (exit_time) {
-		exit_time = time(NULL) + exit_time;}
+		exit_time = get_time() + exit_time;}
 	fft_buf = malloc(tunes[0].buf_len * sizeof(int16_t));
 	length = 1 << tunes[0].bin_e;
 	window_coefs = malloc(length * sizeof(int));
@@ -956,22 +963,20 @@ int main(int argc, char **argv)
 	}
 	while (!do_exit) {
 		scanner();
-		time_now = time(NULL);
+		time_now = get_time();
 		if (time_now < next_tick) {
 			continue;}
 		// time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...
-		cal_time = localtime(&time_now);
-		strftime(t_str, 50, "%Y-%m-%d, %H:%M:%S", cal_time);
+		printf("%lu ", time_now);
 		for (i=0; i<tune_count; i++) {
-			fprintf(file, "%s, ", t_str);
 			csv_dbm(&tunes[i]);
 		}
 		fflush(file);
-		while (time(NULL) >= next_tick) {
+		while (get_time() >= next_tick) {
 			next_tick += interval;}
 		if (single) {
 			do_exit = 1;}
-		if (exit_time && time(NULL) >= exit_time) {
+		if (exit_time && get_time() >= exit_time) {
 			do_exit = 1;}
 	}
 
